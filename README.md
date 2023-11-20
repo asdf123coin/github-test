@@ -54,5 +54,5 @@ contract DogeInuAI is ERC20 {
 
     function getTotalBurnt() public view returns (uint256) {
         return _totalBurnt;
-    }
+            }
 }
