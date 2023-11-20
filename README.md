@@ -1,63 +1,86 @@
-# github-test
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
 
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/release-v4.4/contracts/token/ERC20/ERC20.sol";
+/ SPDX-License-Identifier: MIT
+pragma solidity 0.8.2;
 
-contract DogeInuAI is ERC20 {
-    uint256 private _maxTokensPerWallet = 333333333 * 10**18; // 333 million tokens
-
-    address private _owner;
-    mapping(address => bool) private _bots;
-    mapping(bytes32 => bool) private _processedTransactions; // Keep track of processed transactions
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/utils/math/SafeMath.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 
-    uint256 private _totalBurnt;
-    uint256 private _taxRate = 100; // 0.1% tax rate
-    uint256 private _burnRate = 50; // 0.05% burn rate
+contract AIUSD is ERC20, ReentrancyGuard, Ownable {
+    using SafeMath for uint256;
 
-    constructor() ERC20("Doge Inu AI", "AINU") {
-        _mint(msg.sender, 2_000_000_000_000 * 10**18); // 2 billion tokens
-        _owner = msg.sender;
+    uint256 public initialSupply = 1 ether;
+    uint256 public constant maxSupply = type(uint256).max;
+    uint256 public constant fee = 10; // 0.01%
+    uint256 public constant pricePrecision = 1e8;
+    uint256 public constant oraclePrecision = 1e18;
+    uint256 public lastPrice;
+    AggregatorV3Interface public priceFeed;
+    address public paxGold;
+
+    event Mint(address indexed to, uint256 amount);
+    event Burn(address indexed from, uint256 amount);
+    event PriceUpdated(uint256 price);
+
+    constructor(address _priceFeed, address _paxGold) ERC20("AIUSD", "AIUSD") {
+        priceFeed = AggregatorV3Interface(_priceFeed);
+        paxGold = _paxGold;
+        lastPrice = getPrice();
+        _mint(msg.sender, initialSupply);
     }
 
-    function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
-        require(!_bots[msg.sender], "Sender address is flagged as bot");
-        require(!_bots[recipient], "Recipient address is flagged as bot");
-        require(balanceOf(recipient) + amount <= _maxTokensPerWallet, "Recipient wallet exceeds max token limit");
-
-        uint256 taxAmount = amount * _taxRate / 10_000;
-        uint256 burnAmount = amount * _burnRate / 10_000;
-        uint256 transferAmount = amount - taxAmount - burnAmount;
-
-        _totalBurnt += burnAmount;
-        _burn(msg.sender, burnAmount);
-        _transfer(msg.sender, _owner, taxAmount);
-        _transfer(msg.sender, recipient, transferAmount);
-
-        return true;
+    function getPrice() public view returns (uint256) {
+        (, int256 price, , ,) = priceFeed.latestRoundData();
+        return uint256(price).mul(oraclePrecision).div(pricePrecision);
     }
 
-    function addBot(address botAddress) public {
-        require(msg.sender == _owner, "Only contract owner can add bots");
-        _bots[botAddress] = true;
+    function getRatio() public view returns (uint256) {
+        uint256 paxGoldBalance = ERC20(paxGold).balanceOf(address(this));
+        uint256 totalSupply = totalSupply();
+        return paxGoldBalance.mul(pricePrecision).div(totalSupply);
     }
 
-    function removeBot(address botAddress) public {
-        require(msg.sender == _owner, "Only contract owner can remove bots");
-        _bots[botAddress] = false;
+    function mint() external nonReentrant {
+        uint256 paxGoldBalance = ERC20(paxGold).balanceOf(address(this));
+        uint256 ratio = getRatio();
+        uint256 amount = paxGoldBalance.mul(ratio).div(pricePrecision).sub(totalSupply());
+        require(amount > 0, "AIUSD: Insufficient collateral");
+
+        _mint(msg.sender, amount);
+        emit Mint(msg.sender, amount);
     }
 
-    function getMaxTokensPerWallet() public view returns (uint256) {
-        return _maxTokensPerWallet;
+    function burn(uint256 amount) external nonReentrant {
+        uint256 ratio = getRatio();
+        uint256 paxGoldAmount = amount.mul(ratio).div(pricePrecision);
+        require(paxGoldAmount <= ERC20(paxGold).balanceOf(address(this)), "AIUSD: Insufficient collateral");
+
+        _burn(msg.sender, amount);
+        emit Burn(msg.sender, amount);
     }
 
-    function getTotalBurnt() public view returns (uint256) {
-        return _totalBurnt;
-<<<<<<< HEAD
+    function updatePrice() external onlyOwner {
+        uint256 currentPrice = getPrice();
+        require(currentPrice > 0, "AIUSD: Invalid price");
+        uint256 delta = currentPrice.mul(pricePrecision).div(lastPrice).sub(pricePrecision);
+        uint256 maxDelta = delta.mul(totalSupply()).div(pricePrecision);
+        uint256 amount = maxDelta.mul(fee).div(10000);
+        uint256 balance = ERC20(paxGold).balanceOf(address(this));
+        require(amount <= balance, "AIUSD: Insufficient collateral");
+
+        lastPrice = currentPrice;
+        _mint(address(this), amount);
+        emit Mint(address(this), amount);
+        emit PriceUpdated(currentPrice);
     }
+
+    function withdrawCollateral(uint256 amount) external onlyOwner nonReentrant {
+    uint256 balance = ERC20(paxGold).balanceOf(address(this));
+    require(amount <= balance, "AIUSD: Insufficient collateral");
+    ERC20(paxGold).transfer(msg.sender, amount);
+  }
 }
-=======
-            }
-}
->>>>>>> c9e795ac2552b47b2560415da7e7c524eead4a14
